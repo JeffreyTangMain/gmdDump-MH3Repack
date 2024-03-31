@@ -1,9 +1,7 @@
 ﻿using System;
-using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
-using System.IO;
 
 namespace gmdDump
 {
@@ -11,136 +9,253 @@ namespace gmdDump
     {
         static void Main(string[] args)
         {
-            string input = args[0];
-            string output = Path.GetFileNameWithoutExtension(input) + ".txt"; // Path.GetDirectoryName(input) + "\\" + 
+            //string input = args[0];
+            foreach(var arg in args)
+            {
+                string input = arg;
+                if (Path.GetExtension(input) == ".gmd")
+                {
+                    GmdInput(input);
+                }
+                else
+                {
+                    TxtInput(input);
+                }
+            }
+        }
+
+        static void TxtInput(string input)
+        {
+            string output = Path.GetDirectoryName(input) + "\\" + Path.GetFileNameWithoutExtension(input) + ".table";
+            string headerDir = Path.GetDirectoryName(input) + "\\" + Path.GetFileNameWithoutExtension(input) + ".header";
+            string gmdOutput = Path.GetDirectoryName(input) + "\\" + Path.GetFileNameWithoutExtension(input) + ".gmd";
+            StreamReader reader = File.OpenText(input);
+
+            //headerReader = new BinaryReader(File.OpenRead(headerOutput));
+            //createHeader(input, 250, 100);
+            //createHeader(string input, int string_count, int table_size)
+            if (File.Exists(output))
+                File.Delete(output);
+
+            int string_count = File.ReadLines(input).Count();
+            using (FileStream fsStream = new FileStream(output, FileMode.Append))
+            using (BinaryWriter writer = new BinaryWriter(fsStream, Encoding.UTF8))
+            {
+                string line;
+
+                while ((line = reader.ReadLine()) != null)
+                {
+                    line = line.Replace("<LINE>", "\r\n");
+                    byte[] text = System.Text.Encoding.UTF8.GetBytes(line);
+                    Console.WriteLine(line);
+                    writer.Write(text);
+                    byte padding = 0x0;
+                    writer.Write(padding);
+                }
+            }
+            int table_size = (int)new FileInfo(output).Length;
+            int header_size = (int)new FileInfo(headerDir).Length;
+            Console.WriteLine(string_count);
+            Console.WriteLine(table_size);
+
+            createHeader(input, string_count, table_size);
+
+            if (File.Exists(gmdOutput))
+                File.Delete(gmdOutput);
+
+            using (FileStream fsStream = new FileStream(gmdOutput, FileMode.Create))
+            using (BinaryWriter writer = new BinaryWriter(fsStream, Encoding.UTF8))
+            {
+                BinaryReader tableReader = new BinaryReader(File.OpenRead(output));
+                BinaryReader headerReader = new BinaryReader(File.OpenRead(headerDir));
+
+                byte[] byteBuffer;
+                if (table_size >= header_size)
+                {
+                    byteBuffer = new byte[table_size];
+                }
+                else
+                {
+                    byteBuffer= new byte[header_size];
+                }
+
+                headerReader.Read(byteBuffer, 0, header_size);
+                writer.Write(byteBuffer, 0, header_size);
+                tableReader.Read(byteBuffer, 0, table_size);
+                writer.Write(byteBuffer, 0, table_size);
+
+                /*
+                byte[] byteHeader = new byte[(int)table_start];
+                //headerReader.Read(byteHeader, 0, (int)table_start);
+                headerReader.Read(byteHeader, 0, 0x10); // 0x10 is hardcoded s_count_offset
+                writer.Write(byteHeader, 0, 0x10); // Read until s_count
+                headerReader.Read(byteHeader, 0, 4);
+                writer.Write(string_count); // Write my own s_count
+                headerReader.Read(byteHeader, 0, 4);
+                writer.Write(byteHeader, 0, 4); // Read 4 more
+                headerReader.Read(byteHeader, 0, 4);
+                writer.Write(table_size); // Write my own t_size
+
+                int remainingHeaderSize = (int)table_start - (12 + 0x10);
+                headerReader.Read(byteHeader, 0, remainingHeaderSize);
+                writer.Write(byteHeader, 0, remainingHeaderSize); // Read remaining header
+                headerReader.Close();
+                */
+            }
+        }
+
+        static void GmdInput(string input)
+        {
+            string output = Path.GetDirectoryName(input) + "\\" + Path.GetFileNameWithoutExtension(input) + ".txt";
+            string headerOutput = Path.GetDirectoryName(input) + "\\" + Path.GetFileNameWithoutExtension(input) + ".header";
             bool BigEndian = false;
             long input_size = new FileInfo(input).Length;
             BinaryReader reader = new BinaryReader(File.OpenRead(input));
+            UInt32 table_start;
 
             // Handle input / output files
             int header = reader.ReadInt32();
             int version = reader.ReadInt32();
 
-            if (header == 0x00444D47) { BigEndian = false; Console.WriteLine("File is LE."); }
-            else if (header == 0x474D4400)  { BigEndian = true; Console.WriteLine("File is BE."); }
-            else { Console.WriteLine("ERROR: Invalid input file specified, aborting."); return; }
+            if (header == 0x00444D47)
+            {
+                BigEndian = false;
+            }
+            else if (header == 0x474D4400)
+            {
+                BigEndian = true;
+            }
+            else
+            {
+                Console.WriteLine("ERROR: Invalid input file specified, aborting.");
+                return;
+            }
 
             if (File.Exists(output))
                 File.Delete(output);
+            if (File.Exists(headerOutput))
+                File.Delete(headerOutput);
 
             // Process input file
-            UInt32 identifier_count = 0;
-            UInt32 string_count = 0;            
+            UInt32 string_count = 0;
+            UInt32 table_size;
+            int s_count_offset = 0;
+            int t_size_offset = 0;
 
             if (BigEndian == true)
             {
                 reader.BaseStream.Seek(0x18, SeekOrigin.Begin);
                 string_count = reader.ReadUInt32();
+                Console.WriteLine("INFO: string_count " + string_count);
                 reader.BaseStream.Seek(0x04, SeekOrigin.Current);
-                UInt32 table_size = reader.ReadUInt32();
+                table_size = reader.ReadUInt32();
+                Console.WriteLine("INFO: table_size " + table_size);
 
                 string_count = Helper.swapEndianness(string_count);
                 table_size = Helper.swapEndianness(table_size);
 
-                UInt32 table_start = Convert.ToUInt32(input_size) - table_size;
+                table_start = Convert.ToUInt32(input_size) - table_size;
                 reader.BaseStream.Seek(table_start, SeekOrigin.Begin);
             }
             else
             {
-                int identifier_count_offset = 0;
-                int identifier_size_offset = 0;
-                int s_count_offset = 0;
-                int t_size_offset = 0;
-
                 // Handle version offset differences
                 if (version == 0x00010201 || version == 0x00010101) // MH3U EU, MH3G JP
                 {
                     s_count_offset = 0x10;
                     t_size_offset = 0x18;
-                        
                 }
-                else if (version == 0x00010302) // MHX JP, MHW
+                else if (version == 0x00010302) // MHX JP
                 {
-                    identifier_count_offset = 0x14;
-                    identifier_size_offset = 0x1C;
                     s_count_offset = 0x18;
-                    t_size_offset = 0x20; 
+                    t_size_offset = 0x20;
                 }
                 else
                 {
-                    Console.WriteLine("ERROR: Unsupported GMD version, aborting.");
+                    Console.WriteLine("ERROR: Unsupported GM version, aborting.");
                     return;
                 }
 
-                reader.BaseStream.Seek(identifier_count_offset, SeekOrigin.Begin);
-                identifier_count = reader.ReadUInt32();
-
-                reader.BaseStream.Seek(identifier_size_offset, SeekOrigin.Begin);
-                UInt32 i_table_size = reader.ReadUInt32();
-
                 reader.BaseStream.Seek(s_count_offset, SeekOrigin.Begin);
                 string_count = reader.ReadUInt32();
-
+                Console.WriteLine("INFO: string_count " + string_count);
                 reader.BaseStream.Seek(t_size_offset, SeekOrigin.Begin);
-                UInt32 table_size = reader.ReadUInt32();
+                table_size = reader.ReadUInt32();
+                Console.WriteLine("INFO: table_size " + table_size);
 
-                // Whacky handling of DD:DA PC gmd, since it also has version 0x00010201 but other offsets
-                if (string_count == 0)
-                {
-                    reader.BaseStream.Seek(0x18, SeekOrigin.Begin);
-                    string_count = reader.ReadUInt32();
-
-                    reader.BaseStream.Seek(0x20, SeekOrigin.Begin);
-                    table_size = reader.ReadUInt32();
-                }
-
-                UInt32 table_start = Convert.ToUInt32(input_size) - table_size - i_table_size;
+                table_start = Convert.ToUInt32(input_size) - table_size;
                 reader.BaseStream.Seek(table_start, SeekOrigin.Begin);
             }
 
-            if (BigEndian == true)
+            // Process strings in string table
+            for (int i = 0; i < string_count; i++)
             {
-                // Process strings in string table
-                for (int i = 0; i < string_count; i++)
+                string str = Helper.readNullterminated(reader).Replace("\r\n", "<LINE>");
+                using (StreamWriter writer = new StreamWriter(output, true, Encoding.UTF8))
                 {
-                    string str = Helper.readNullterminated(reader).Replace("\r\n", "<LINE>");
-                    using (StreamWriter writer = new StreamWriter(output, true, Encoding.UTF8))
-                    {
-                        writer.WriteLine(str);
-                    }
+                    writer.WriteLine(str);
                 }
+            }
+
+            createHeader(input, (int)string_count, (int)table_size);
+
+            Console.WriteLine("INFO: Finished processing " + Path.GetFileName(input) + "!");
+        }
+
+        static void createHeader(string input, int string_count, int table_size)
+        {
+            string headerOutput = Path.GetDirectoryName(input) + "\\" + Path.GetFileNameWithoutExtension(input) + ".header";
+            BinaryReader headerReader;
+            bool renameAndDelete = false;
+
+            long input_size = new FileInfo(input).Length;
+            UInt32 table_start;
+
+            if (File.Exists(headerOutput))
+            {
+                headerReader = new BinaryReader(File.OpenRead(headerOutput));
+                input_size = new FileInfo(headerOutput).Length;
+                headerOutput = Path.GetDirectoryName(input) + "\\" + Path.GetFileNameWithoutExtension(input) + "2.header";
+                table_start = Convert.ToUInt32(input_size);
+                renameAndDelete = true;
             }
             else
             {
-                // Process strings in identifier table
-                for (int i = 0; i < identifier_count; i++)
-                {
-                    string str = Helper.readNullterminated(reader).Replace("\r\n", "<LINE>");
-                    using (StreamWriter writer = new StreamWriter(Path.GetFileNameWithoutExtension(input) + ".tmp", true, Encoding.UTF8))
-                    {
-                        writer.WriteLine(str + "_____");
-                    }
-                }
-
-                // Process strings in string table
-                for (int i = 0; i < string_count; i++)
-                {
-                    string line = "";
-                    string str = Helper.readNullterminated(reader).Replace("\r\n", "<LINE>");
-                    using (StreamReader Oreader = new StreamReader(Path.GetFileNameWithoutExtension(input) + ".tmp", Encoding.UTF8))
-                    {
-                        for (var j = 0; j < i; j++) { Oreader.ReadLine(); }
-                        line = Oreader.ReadLine() + str;
-                    }
-                    using (StreamWriter writer = new StreamWriter(output, true, Encoding.UTF8))
-                    {
-                        writer.WriteLine(line);
-                    }
-                }
+                headerReader = new BinaryReader(File.OpenRead(input));
+                // Get table_start which is where the header ends
+                BinaryReader reader = new BinaryReader(File.OpenRead(input));
+                reader.BaseStream.Seek(0x18, SeekOrigin.Begin);
+                UInt32 read_table_size = reader.ReadUInt32();
+                Console.WriteLine("INFO: table_size " + read_table_size);
+                table_start = Convert.ToUInt32(input_size) - read_table_size;
             }
 
-            if (BigEndian == false) { File.Delete(Path.GetFileNameWithoutExtension(input) + ".tmp"); }
-            Console.WriteLine("INFO: Finished processing " + Path.GetFileName(input) + "!");
+            using (FileStream fsStream = new FileStream(headerOutput, FileMode.Create))
+            using (BinaryWriter writer = new BinaryWriter(fsStream, Encoding.UTF8))
+            {
+                byte[] byteHeader = new byte[(int)table_start];
+                //headerReader.Read(byteHeader, 0, (int)table_start);
+                headerReader.Read(byteHeader, 0, 0x10); // 0x10 is hardcoded s_count_offset
+                writer.Write(byteHeader, 0, 0x10); // Read until s_count
+                headerReader.Read(byteHeader, 0, 4);
+                writer.Write(string_count); // Write my own s_count
+                headerReader.Read(byteHeader, 0, 4);
+                writer.Write(byteHeader, 0, 4); // Read 4 more
+                headerReader.Read(byteHeader, 0, 4);
+                writer.Write(table_size); // Write my own t_size
+
+                int remainingHeaderSize = (int)table_start - (12 + 0x10);
+                headerReader.Read(byteHeader, 0, remainingHeaderSize);
+                writer.Write(byteHeader, 0, remainingHeaderSize); // Read remaining header
+                headerReader.Close();
+            }
+
+            if (renameAndDelete)
+            {
+                string orgHeader = Path.GetDirectoryName(input) + "\\" + Path.GetFileNameWithoutExtension(input) + ".header";
+                File.Delete(orgHeader);
+                File.Move(headerOutput, orgHeader);
+            }
         }
     }
 }
