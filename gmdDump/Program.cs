@@ -84,6 +84,9 @@ namespace gmdDump
                 tableReader.Read(byteBuffer, 0, table_size);
                 writer.Write(byteBuffer, 0, table_size);
 
+                tableReader.Close();
+                headerReader.Close();
+
                 /*
                 byte[] byteHeader = new byte[(int)table_start];
                 //headerReader.Read(byteHeader, 0, (int)table_start);
@@ -104,6 +107,37 @@ namespace gmdDump
             }
         }
 
+        public static class fileOffsets
+        {
+            public static int s_count_offset = 0;
+            public static int t_size_offset = 0;
+        }
+
+        public static void offsetSetter(String file)
+        {
+            BinaryReader reader = new BinaryReader(File.OpenRead(file));
+            reader.ReadInt32();
+            int version = reader.ReadInt32();
+
+            // Handle version offset differences
+            if (version == 0x00010201 || version == 0x00010101) // MH3U EU, MH3G JP
+            {
+                fileOffsets.s_count_offset = 0x10;
+                fileOffsets.t_size_offset = 0x18;
+            }
+            else if (version == 0x00010302 || version == 0x00020301) // MHX JP, MHXX
+            {
+                fileOffsets.s_count_offset = 0x18;
+                fileOffsets.t_size_offset = 0x20;
+            }
+            else
+            {
+                Console.WriteLine("ERROR: Unsupported GM version, aborting.");
+                return;
+            }
+            reader.Close();
+        }
+
         static void GmdInput(string input)
         {
             string output = Path.GetDirectoryName(input) + "\\" + Path.GetFileNameWithoutExtension(input) + ".txt";
@@ -115,7 +149,8 @@ namespace gmdDump
 
             // Handle input / output files
             int header = reader.ReadInt32();
-            int version = reader.ReadInt32();
+            //int version = reader.ReadInt32();
+            offsetSetter(input);
 
             if (header == 0x00444D47)
             {
@@ -139,12 +174,12 @@ namespace gmdDump
             // Process input file
             UInt32 string_count = 0;
             UInt32 table_size;
-            int s_count_offset = 0;
-            int t_size_offset = 0;
+            //int s_count_offset = 0;
+            //int t_size_offset = 0;
 
             if (BigEndian == true)
             {
-                reader.BaseStream.Seek(0x18, SeekOrigin.Begin);
+                reader.BaseStream.Seek(0x20, SeekOrigin.Begin);
                 string_count = reader.ReadUInt32();
                 Console.WriteLine("INFO: string_count " + string_count);
                 reader.BaseStream.Seek(0x04, SeekOrigin.Current);
@@ -159,27 +194,10 @@ namespace gmdDump
             }
             else
             {
-                // Handle version offset differences
-                if (version == 0x00010201 || version == 0x00010101) // MH3U EU, MH3G JP
-                {
-                    s_count_offset = 0x10;
-                    t_size_offset = 0x18;
-                }
-                else if (version == 0x00010302) // MHX JP
-                {
-                    s_count_offset = 0x18;
-                    t_size_offset = 0x20;
-                }
-                else
-                {
-                    Console.WriteLine("ERROR: Unsupported GM version, aborting.");
-                    return;
-                }
-
-                reader.BaseStream.Seek(s_count_offset, SeekOrigin.Begin);
+                reader.BaseStream.Seek(fileOffsets.s_count_offset, SeekOrigin.Begin);
                 string_count = reader.ReadUInt32();
                 Console.WriteLine("INFO: string_count " + string_count);
-                reader.BaseStream.Seek(t_size_offset, SeekOrigin.Begin);
+                reader.BaseStream.Seek(fileOffsets.t_size_offset, SeekOrigin.Begin);
                 table_size = reader.ReadUInt32();
                 Console.WriteLine("INFO: table_size " + table_size);
 
@@ -199,6 +217,8 @@ namespace gmdDump
 
             createHeader(input, (int)string_count, (int)table_size);
 
+            reader.Close();
+
             Console.WriteLine("INFO: Finished processing " + Path.GetFileName(input) + "!");
         }
 
@@ -213,6 +233,7 @@ namespace gmdDump
 
             if (File.Exists(headerOutput))
             {
+                offsetSetter(headerOutput);
                 headerReader = new BinaryReader(File.OpenRead(headerOutput));
                 input_size = new FileInfo(headerOutput).Length;
                 headerOutput = Path.GetDirectoryName(input) + "\\" + Path.GetFileNameWithoutExtension(input) + "2.header";
@@ -224,7 +245,7 @@ namespace gmdDump
                 headerReader = new BinaryReader(File.OpenRead(input));
                 // Get table_start which is where the header ends
                 BinaryReader reader = new BinaryReader(File.OpenRead(input));
-                reader.BaseStream.Seek(0x18, SeekOrigin.Begin);
+                reader.BaseStream.Seek(fileOffsets.t_size_offset, SeekOrigin.Begin);
                 UInt32 read_table_size = reader.ReadUInt32();
                 Console.WriteLine("INFO: table_size " + read_table_size);
                 table_start = Convert.ToUInt32(input_size) - read_table_size;
@@ -235,8 +256,8 @@ namespace gmdDump
             {
                 byte[] byteHeader = new byte[(int)table_start];
                 //headerReader.Read(byteHeader, 0, (int)table_start);
-                headerReader.Read(byteHeader, 0, 0x10); // 0x10 is hardcoded s_count_offset
-                writer.Write(byteHeader, 0, 0x10); // Read until s_count
+                headerReader.Read(byteHeader, 0, fileOffsets.s_count_offset); // 0x10 is hardcoded s_count_offset
+                writer.Write(byteHeader, 0, fileOffsets.s_count_offset); // Read until s_count
                 headerReader.Read(byteHeader, 0, 4);
                 writer.Write(string_count); // Write my own s_count
                 headerReader.Read(byteHeader, 0, 4);
@@ -244,7 +265,7 @@ namespace gmdDump
                 headerReader.Read(byteHeader, 0, 4);
                 writer.Write(table_size); // Write my own t_size
 
-                int remainingHeaderSize = (int)table_start - (12 + 0x10);
+                int remainingHeaderSize = (int)table_start - (12 + fileOffsets.s_count_offset);
                 headerReader.Read(byteHeader, 0, remainingHeaderSize);
                 writer.Write(byteHeader, 0, remainingHeaderSize); // Read remaining header
                 headerReader.Close();

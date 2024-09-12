@@ -1,6 +1,6 @@
 # gmdDump
-This fork specifically adds the capability to repack MH3G/U GMDs and to repack multiple files at once.
-It should be able to unpack multiple files at once without problem but there was no testing done with anything except MH3G/U GMDs.
+This fork specifically adds the capability to repack MH3G/U/XX GMDs and to repack multiple files at once.
+It should be able to unpack multiple files at once without problem but there was no testing done with anything except MH3G/U/XX GMDs.
 
 Drag and drop the edited .txt onto the executable to repack it with the .header it created and the .table it'll create from the .txt.
 
